@@ -1,0 +1,4 @@
+tabulate
+pandas
+glob
+json
