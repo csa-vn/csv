@@ -3,170 +3,214 @@ import os
 import glob
 import json
 
-# --- CẤU HÌNH THƯ MỤC VÀ CỘT ---
-folder_path = r'C:\Users\DELL\Desktop\csv\cttp' # Thay đổi nếu cần
-company_col = 'Company name' # Thay đổi nếu tên cột công ty khác
-phone_col = 'Phone'        # Thay đổi nếu tên cột số điện thoại khác
-email_cols = ['Email 1', 'Email 2', 'Email 3'] # Thay đổi nếu tên cột email khác hoặc số lượng khác
-# -------------------------------
+folder_path = r'C:\Users\DELL\Desktop\csv\ctdv'
 
+standard_company_col = 'Company name'
+
+column_name_map = {
+}
+
+email_cols = ['Email 1', 'Email 2', 'Email 3']
+
+phone_col = 'Phone'
+
+print(f"--- BẮT ĐẦU QUÁ TRÌNH XỬ LÝ ---")
+print(f"Mục tiêu: Kết hợp dữ liệu, gộp SĐT/Email theo Công Ty ({standard_company_col}), lọc bỏ công ty không có SĐT/Email, xuất JSON.")
 print(f"Đang xử lý các tệp CSV trong thư mục: {folder_path}")
+print(f"Kiểm tra 'column_name_map', 'email_cols' và 'phone_col' trong code để đảm bảo cấu hình đúng.")
 
 search_pattern = os.path.join(folder_path, '*.csv')
 csv_files = glob.glob(search_pattern)
 
-# --- Bước 1: Tìm tệp CSV ---
 print(f"\n--- Bước 1: Tìm tệp CSV ---")
 if not csv_files:
     print(f"Không tìm thấy tệp CSV nào trong thư mục: {folder_path}")
-    exit() # Thoát chương trình ngay
+    print("--- QUÁ TRÌNH XỬ LÝ KẾT THÚC ---")
+    exit()
 else:
     print(f"Tìm thấy {len(csv_files)} tệp CSV:")
-    for f in csv_files:
-        print(f"- {f}")
+    for i, f in enumerate(csv_files):
+        print(f"- {i+1}: {os.path.basename(f)}")
 print("--- Kết thúc Bước 1 ---")
 
-# Bắt đầu xử lý chỉ khi có tệp CSV được tìm thấy
-print(f"\n--- Bước 2: Đọc và kết hợp tệp ---")
-dfs_list = [] # Danh sách để lưu trữ các DataFrame từ mỗi tệp
-last_processed_csv = None # Biến để lưu lại tên tệp CSV cuối cùng
+print(f"\n--- Bước 2: Đọc, chuẩn hóa tên cột và kết hợp tệp ---")
+dfs_list = []
 
-for file_path in csv_files:
+for i, file_path in enumerate(csv_files):
+    print(f"\n[{i+1}/{len(csv_files)}] Đang xử lý tệp: {os.path.basename(file_path)}")
+    df = None
     try:
-        # Thử các encoding phổ biến cho tiếng Việt
+        print(f"  Đang đọc bằng utf-8-sig...")
         try:
             df = pd.read_csv(file_path, encoding='utf-8-sig', engine='python', on_bad_lines='warn')
         except UnicodeDecodeError:
-            print(f"Không thể đọc {file_path} bằng utf-8-sig. Thử cp1258...")
-            df = pd.read_csv(file_path, encoding='cp1258', engine='python', on_bad_lines='warn')
+            print(f"  Không thể đọc bằng utf-8-sig. Thử cp1258...")
+            try:
+                df = pd.read_csv(file_path, encoding='cp1258', engine='python', on_bad_lines='warn')
+            except UnicodeDecodeError:
+                print(f"  Không thể đọc bằng cp1258. Thử latin-1...")
+                try:
+                    df = pd.read_csv(file_path, encoding='latin-1', engine='python', on_bad_lines='warn')
+                except UnicodeDecodeError:
+                    print(f"  Không thể đọc tệp '{os.path.basename(file_path)}' với các encoding thông thường. Bỏ qua tệp này.")
+                    continue
+                except Exception as e:
+                    print(f"  Lỗi đọc tệp '{os.path.basename(file_path)}' sau khi thử cp1258: {e}")
+                    continue
+            except Exception as e:
+                print(f"  Lỗi đọc tệp '{os.path.basename(file_path)}' sau khi thử utf-8-sig: {e}")
+                continue
         except Exception as e:
-             print(f"Lỗi đọc tệp {file_path} (không phải UnicodeDecodeError): {e}")
-             continue # Bỏ qua tệp này và chuyển sang tệp tiếp theo
+            print(f"  Lỗi đọc tệp '{os.path.basename(file_path)}' (không phải UnicodeDecodeError): {e}")
+            continue
 
-        dfs_list.append(df)
-        last_processed_csv = file_path # Cập nhật tệp cuối cùng đã xử lý thành công
-        print(f"Đã đọc thành công: {file_path} ({len(df)} dòng)")
+        if df is not None:
+            df.columns = df.columns.str.strip()
+
+            rename_dict = {col.strip(): column_name_map[col.strip()] for col in column_name_map if col.strip() in df.columns}
+            if rename_dict:
+                df = df.rename(columns=rename_dict)
+                print(f"  Tên cột sau khi đổi tên: {df.columns.tolist()}")
+
+
+            if standard_company_col not in df.columns:
+                print(f"  CẢNH BÁO: Tệp '{os.path.basename(file_path)}' thiếu cột tên công ty chuẩn '{standard_company_col}' sau khi chuẩn hóa tên. Dữ liệu từ tệp này sẽ không được tính vào dữ liệu chung.")
+                continue
+
+            required_contact_cols = [phone_col] + email_cols
+            missing_contact_cols = [col for col in required_contact_cols if col not in df.columns]
+            if missing_contact_cols:
+                print(f"  CẢNH BÁO: Tệp '{os.path.basename(file_path)}' thiếu các cột liên hệ được cấu hình: {missing_contact_cols}. Dữ liệu liên hệ từ tệp này có thể không đầy đủ.")
+
+
+            dfs_list.append(df)
+            print(f"  Đã xử lý xong việc đọc và chuẩn hóa tên cột cho tệp: {os.path.basename(file_path)} ({len(df)} dòng)")
+
     except FileNotFoundError:
-        print(f"Lỗi: Không tìm thấy tệp {file_path}. Có thể tệp đã bị xóa hoặc đổi tên.")
+        print(f"Lỗi: Không tìm thấy tệp {os.path.basename(file_path)}. Có thể tệp đã bị xóa hoặc đổi tên.")
     except Exception as e:
-        print(f"Lỗi khi đọc tệp {file_path}: {e}")
+        print(f"Lỗi không mong muốn khi xử lý tệp {os.path.basename(file_path)}: {e}")
 
 
-# Kiểm tra xem có DataFrame nào đã được đọc thành công không
 if not dfs_list:
-    print("\nKhông có dữ liệu nào được đọc thành công từ các tệp CSV. Không thể tiếp tục xử lý.")
+    print("\nKhông có dữ liệu nào được đọc thành công từ các tệp CSV có cột tên công ty cần thiết.")
+    print("--- QUÁ TRÌNH XỬ LÝ KẾT THÚC ---")
 else:
+    print("\nĐang kết hợp các DataFrame...")
     combined_df = pd.concat(dfs_list, ignore_index=True)
+    print("Đã kết hợp xong.")
 
-    # --- Kiểm tra dữ liệu gốc sau khi kết hợp ---
     print("\n--- Kiểm tra DataFrame gốc kết hợp ---")
     print(f"Tổng số dòng trong DataFrame gốc: {len(combined_df)}")
-    # print("\n5 dòng đầu:")
-    # print(combined_df.head().to_markdown(index=False))
     print("--- Kết thúc kiểm tra DataFrame gốc ---")
 
-    print("\n--- Bắt đầu xử lý tìm các dòng dữ liệu trùng tên và có thông tin liên hệ ---")
+    print("\n--- Bước 3: Chuẩn bị dữ liệu trước khi nhóm và tổng hợp ---")
 
-    # Kiểm tra các cột cần thiết
-    all_contact_cols = [phone_col] + email_cols
-    required_cols = [company_col] + all_contact_cols
-    if not all(col in combined_df.columns for col in required_cols):
-        missing = [col for col in required_cols if col not in combined_df.columns]
-        print(f"\nLỖI NGHIÊM TRỌNG: Các cột cần thiết ({', '.join(missing)}) không tồn tại trong dữ liệu kết hợp.")
-        print("Vui lòng kiểm tra lại tên cột trong tệp CSV của bạn và sửa lại các biến company_col, phone_col, email_cols trong code cho khớp.")
-
+    if standard_company_col not in combined_df.columns:
+        print(f"\nLỖI NGHIÊM TRỌNG: Cột tên công ty chuẩn '{standard_company_col}' không tồn tại trong dữ liệu kết hợp sau khi xử lý.")
+        print("Vui lòng kiểm tra lại tên cột trong tệp CSV của bạn và cấu hình 'column_name_map' cho đúng.")
+        print("--- QUÁ TRÌ LÝ KẾT THÚC VỚI LỖI ---")
     else:
-        # --- Bước 3: Làm sạch dữ liệu liên hệ và tên công ty ---
-        print("\n--- Bước 3: Làm sạch dữ liệu liên hệ và tên công ty ---")
-        for col in all_contact_cols:
-            # Chuyển sang string, điền giá trị rỗng bằng '', và loại bỏ khoảng trắng thừa
-             combined_df[col] = combined_df[col].astype(str).fillna('').str.strip()
-             # print(f"Đã làm sạch cột: {col}")
+        combined_df[standard_company_col] = combined_df[standard_company_col].astype(str).fillna('').str.strip()
+        combined_df = combined_df[combined_df[standard_company_col] != ''].copy()
+        print(f"Đã làm sạch và loại bỏ các dòng có tên công ty rỗng. Số dòng còn lại: {len(combined_df)}")
 
-        # Xử lý cột tên công ty: chuyển sang string, loại bỏ khoảng trắng
-        combined_df[company_col] = combined_df[company_col].astype(str).str.strip()
-        print(f"Đã làm sạch cột: {company_col}")
+        contact_cols_exist = [col for col in [phone_col] + email_cols if col in combined_df.columns]
+        for col in contact_cols_exist:
+            combined_df[col] = combined_df[col].astype(str).fillna('').str.strip()
+        print(f"Đã làm sạch các cột liên hệ ({contact_cols_exist}).")
+
         print("--- Kết thúc Bước 3 ---")
 
-        # --- Bước 4: Xác định tên công ty trùng lặp trong dữ liệu gốc ---
-        print("\n--- Bước 4: Xác định tên công ty trùng lặp ---")
-        # Đếm số lần xuất hiện tên công ty trong dữ liệu gốc
-        company_counts = combined_df.groupby(company_col).size()
-        # Lọc các tên công ty rỗng và chỉ lấy các tên có số đếm > 1
-        valid_company_counts = company_counts[company_counts.index != '']
-        duplicate_company_names = valid_company_counts[valid_company_counts > 1].index.tolist()
+        print(f"\n--- Bước 4: Nhóm dữ liệu theo '{standard_company_col}' và tổng hợp ---")
 
-        if not duplicate_company_names:
-            print("Không tìm thấy tên công ty nào bị trùng lặp trong dữ liệu gốc (loại trừ các dòng không có tên công ty rỗng và chỉ xuất hiện 1 lần).")
-            final_output_df = pd.DataFrame() # Tạo DF rỗng để bỏ qua bước xuất JSON
+        agg_dict = {}
+        for col in combined_df.columns:
+            if col == standard_company_col:
+                continue
+            elif col == phone_col:
+                agg_dict[col] = lambda x: list(set(x) - {''})
+            elif col in email_cols:
+                agg_dict[col] = lambda x: list(set(x) - {''})
+            else:
+                agg_dict[col] = 'first'
+
+
+        grouped_data = combined_df.groupby(standard_company_col, as_index=False).agg(agg_dict)
+
+        print(f"Đã nhóm dữ liệu. Số lượng công ty duy nhất ban đầu: {len(grouped_data)}")
+        print("--- Kết thúc Bước 4 ---")
+
+
+        print("\n--- Bước 5: Xử lý sau tổng hợp (gộp Email, lọc, chuẩn bị xuất) ---")
+
+        if email_cols:
+            email_cols_exist_grouped = [col for col in email_cols if col in grouped_data.columns]
+            if email_cols_exist_grouped:
+                grouped_data['Emails'] = grouped_data[email_cols_exist_grouped].apply(
+                    lambda row: list(set(item for sublist in row for item in sublist)), axis=1
+                )
+                grouped_data = grouped_data.drop(columns=email_cols_exist_grouped)
+                print(f"Đã gộp các cột Email ({email_cols_exist_grouped}) thành cột 'Emails'.")
+            else:
+                grouped_data['Emails'] = [[]] * len(grouped_data)
+                print("Không tìm thấy các cột Email cấu hình sau khi nhóm. Tạo cột 'Emails' rỗng.")
         else:
-            print(f"Tìm thấy {len(duplicate_company_names)} tên công ty bị trùng lặp.")
-            # Chỉ in danh sách nếu không quá dài
-            if len(duplicate_company_names) < 50:
-                 print("\n".join([f"- {name}" for name in duplicate_company_names]))
-            else:
-                 print(f" (Danh sách quá dài, chỉ in số lượng: {len(duplicate_company_names)})")
+            grouped_data['Emails'] = [[]] * len(grouped_data)
+            print("Không có cột Email nào được cấu hình. Tạo cột 'Emails' rỗng.")
 
-            print("--- Kết thúc Bước 4 ---")
 
-            # --- Bước 5: Lọc các dòng gốc thỏa mãn điều kiện trùng tên VÀ có dữ liệu liên hệ ---
-            print("\n--- Bước 5: Lọc các dòng gốc thỏa mãn điều kiện trùng tên VÀ có dữ liệu liên hệ ---")
+        if phone_col not in grouped_data.columns:
+            grouped_data[phone_col] = [[]] * len(grouped_data)
+            print(f"Không tìm thấy cột SĐT ('{phone_col}') sau khi nhóm. Tạo cột '{phone_col}' rỗng.")
 
-            # Lọc các dòng gốc chỉ lấy những dòng có tên công ty nằm trong danh sách trùng lặp
-            duplicate_name_rows_df = combined_df[
-                combined_df[company_col].isin(duplicate_company_names)
-            ].copy() # Dùng .copy() để tránh SettingWithCopyWarning
 
-            print(f"Số lượng dòng gốc có tên công ty trùng lặp: {len(duplicate_name_rows_df)}")
+        if phone_col in grouped_data.columns:
+            grouped_data = grouped_data.rename(columns={phone_col: 'Phones'})
+            print(f"Đã đổi tên cột '{phone_col}' thành 'Phones'.")
 
-            if duplicate_name_rows_df.empty:
-                 print("Không có dòng nào có tên công ty trùng lặp trong dữ liệu gốc.")
-                 final_output_df = pd.DataFrame() # Tạo DF rỗng
-            else:
-                 # Kiểm tra nếu CÓ BẤT KỲ cột liên hệ nào (Phone, Email1, Email2, Email3...) KHÔNG RỖNG trong dòng đó
-                 # Tạo điều kiện lọc: True nếu ít nhất một cột liên hệ không rỗng cho dòng đó
-                 # .any(axis=1) kiểm tra xem có bất kỳ giá trị True nào trên mỗi hàng (axis=1) không
-                 has_contact_info_condition = (duplicate_name_rows_df[all_contact_cols] != '').any(axis=1)
 
-                 # Áp dụng điều kiện lọc để chỉ giữ lại các dòng có thông tin liên hệ
-                 final_output_df = duplicate_name_rows_df[has_contact_info_condition].copy()
+        initial_grouped_count = len(grouped_data)
+        filtered_data = grouped_data[
+            (grouped_data['Phones'].apply(len) > 0) | (grouped_data['Emails'].apply(len) > 0)
+        ].copy()
 
-                 print(f"Số lượng dòng gốc có tên công ty trùng lặp VÀ có thông tin liên hệ: {len(final_output_df)}")
+        final_filtered_count = len(filtered_data)
+        print(f"Số lượng công ty sau khi lọc bỏ các công ty không có SĐT/Email: {final_filtered_count}")
+        print(f"Đã loại bỏ {initial_grouped_count - final_filtered_count} công ty không có thông tin liên hệ.")
 
-                 if final_output_df.empty:
-                      print("Không có dòng nào có tên công ty trùng lặp và có thông tin liên hệ sau khi lọc.")
-                 else:
-                      print("5 dòng đầu của DataFrame cuối cùng (dòng gốc, tên trùng, có liên hệ):")
-                      # In 5 dòng đầu với tất cả các cột gốc
-                      print(final_output_df.head().to_markdown(index=False, numalign="left", stralign="left"))
+        final_cols_order = [standard_company_col, 'Phones', 'Emails'] + [
+            col for col in filtered_data.columns if col not in [standard_company_col, 'Phones', 'Emails']
+        ]
+        final_cols_order = [col for col in final_cols_order if col in filtered_data.columns]
 
-            print(f"\nTổng số dòng trong DataFrame cuối cùng (dòng gốc, tên trùng, có liên hệ): {len(final_output_df)}")
-            print("--- Kết thúc Bước 5 ---")
+        filtered_data = filtered_data[final_cols_order]
+        print("Đã sắp xếp lại thứ tự các cột.")
 
-        # --- Bước 6: Xuất dữ liệu ra tệp JSON ---
+        print("--- Kết thúc Bước 5 ---")
+
+
         print(f"\n--- Bước 6: Xuất dữ liệu ra tệp JSON ---")
 
-        # Chỉ xuất nếu có dữ liệu trong final_output_df và có tệp CSV được xử lý thành công
-        if not final_output_df.empty and last_processed_csv:
-            # Xác định tên tệp JSON dựa trên tên tệp CSV cuối cùng đã được xử lý thành công
-            base_name = os.path.splitext(os.path.basename(last_processed_csv))[0] # Lấy tên tệp không kèm đuôi
-            json_output_filename = f"{base_name}_duplicate_info.json" # Thêm hậu tố để rõ ràng
+        if not filtered_data.empty:
+            json_records = filtered_data.to_dict('records')
+
+            folder_base_name = os.path.basename(folder_path)
+            json_output_filename = f"{folder_base_name}_merged_contact_data.json"
             json_output_path = os.path.join(folder_path, json_output_filename)
 
             try:
-                # Chuyển DataFrame sang định dạng JSON list of records
-                # force_ascii=False để đảm bảo tiếng Việt hiển thị đúng
-                # index=False để không bao gồm index của DataFrame trong JSON
-                final_output_df.to_json(json_output_path, orient='records', indent=4, force_ascii=False, index=False)
-                print(f"Đã xuất thông tin các dòng gốc (tên trùng, có dữ liệu liên hệ) ra tệp: {json_output_path}")
+                print(f"Đang xuất dữ liệu đã xử lý ra tệp JSON: {json_output_path}")
+                with open(json_output_path, 'w', encoding='utf-8') as f:
+                    json.dump(json_records, f, indent=4, ensure_ascii=False)
+
+                print(f"Đã xuất dữ liệu đã xử lý ra tệp: {json_output_path}")
             except Exception as e:
                 print(f"Lỗi khi ghi tệp JSON {json_output_path}: {e}")
-        elif final_output_df.empty:
-             print("Không có dữ liệu công ty trùng lặp có thông tin liên hệ để xuất ra tệp JSON.")
-        else: # last_processed_csv is None, meaning no files were successfully read
-             print("Không có tệp CSV nào được đọc thành công để xác định tên tệp JSON đầu ra.")
+        else:
+            print("Không có dữ liệu nào còn lại sau khi lọc công ty không có thông tin liên hệ. Không xuất tệp JSON.")
 
 
-        print("\n--- KẾT THÚC XỬ LÝ DỮ LIỆU TRÙNG LẶP ---")
+        print("\n--- KẾT THÚC XỬ LÝ DỮ LIỆU ---")
 
 print("\n--- Quá trình xử lý hoàn tất ---")
